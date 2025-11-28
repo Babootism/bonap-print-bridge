@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+ main
 using System.Text;
 
 namespace Bonap.PrintBridge;
@@ -17,19 +17,7 @@ public static class Program
         }
 
         var printerName = args[0];
-        var command = args[1];
-
-        if (IsDrawerCommand(command))
-        {
-            var pin = command.Equals("--drawer1", StringComparison.OrdinalIgnoreCase) ? (byte)1 : (byte)0;
-            var drawerPayload = BuildDrawerPayload(pin);
-            var drawerSent = TrySendRaw(printerName, drawerPayload);
-            return drawerSent ? 0 : 2;
-        }
-
-        var message = string.Join(" ", args.Skip(1));
-        var payload = BuildReceipt(message);
-        var sent = TrySendRaw(printerName, EscPos.AsBytes(payload));
+ main
         return sent ? 0 : 2;
     }
 
@@ -49,40 +37,7 @@ public static class Program
         return builder.ToString();
     }
 
-    private static byte[] BuildDrawerPayload(byte pin)
-    {
-        var buffer = new List<byte>();
-        buffer.AddRange(EscPos.OpenDrawer(pin));
-        buffer.AddRange(EscPos.Cut());
-        return buffer.ToArray();
-    }
-
-    private static bool TrySendRaw(string printerName, byte[] payload)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            Console.WriteLine("Printing is only supported on Windows. Payload generation succeeded but nothing was sent.");
-            return true;
-        }
-
-        var sent = RawPrinterHelper.SendBytesToPrinter(printerName, payload);
-        Console.WriteLine(sent
-            ? $"ESC/POS payload sent to '{printerName}'."
-            : "Failed to send payload to the printer.");
-        return sent;
-    }
-
-    private static bool IsDrawerCommand(string argument)
-    {
-        return argument.Equals("--drawer", StringComparison.OrdinalIgnoreCase)
-            || argument.Equals("--drawer1", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static void ShowUsage()
-    {
-        Console.WriteLine("Usage: Bonap.PrintBridge <printerName> <message>");
-        Console.WriteLine("       Bonap.PrintBridge <printerName> --drawer");
-        Console.WriteLine("       Bonap.PrintBridge <printerName> --drawer1");
+ main
         Console.WriteLine("Example: Bonap.PrintBridge \"Receipt Printer\" \"Bonjour, monde !\"");
     }
 }

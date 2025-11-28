@@ -16,12 +16,7 @@ Pour envoyer un ticket de test :
 dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj "Nom de l'imprimante" "Bonjour depuis Bonap !"
 ```
 
-Pour ouvrir le tiroir-caisse via ESC/POS (broche 0 ou 1) :
-```bash
-dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj "Nom de l'imprimante" --drawer
-dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj "Nom de l'imprimante" --drawer1
-```
-
+main
 Sur un système non Windows, la génération du payload ESC/POS fonctionne mais rien n'est envoyé à l'imprimante.
 
 ## Scripts PowerShell

@@ -15,17 +15,7 @@ public static class RawPrinterHelper
         }
 
         var bytes = Encoding.UTF8.GetBytes(data);
-        return SendBytesToPrinter(printerName, bytes);
-    }
-
-    [SupportedOSPlatform("windows")]
-    public static bool SendBytesToPrinter(string printerName, byte[] bytes)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException("Raw printer access requires Windows.");
-        }
-
+ main
         var pBytes = Marshal.AllocCoTaskMem(bytes.Length);
 
         try
