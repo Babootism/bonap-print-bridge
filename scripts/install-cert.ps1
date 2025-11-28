@@ -1,24 +1,33 @@
-param (
-    [Parameter(Mandatory = $true)][string]$PfxPath,
-    [Parameter(Mandatory = $true)][string]$Password,
-    [Parameter()][string]$StoreLocation = "CurrentUser",
-    [Parameter()][string]$StoreName = "My"
+param(
+    [string]$PfxPath = (Join-Path $PSScriptRoot "..\certs\localhost.pfx"),
+    [string]$Password = "bonap-bridge"
 )
 
-Write-Host "Installing certificate from $PfxPath into $StoreLocation/$StoreName" -ForegroundColor Cyan
+$ErrorActionPreference = "Stop"
 
-if (-not (Test-Path -Path $PfxPath)) {
-    throw "PFX file not found: $PfxPath"
+Write-Host "Creating local HTTPS certificate for Bonap Print Bridge" -ForegroundColor Cyan
+
+$certName = "Bonap Print Bridge Localhost"
+$certStorePath = "Cert:\LocalMachine\My"
+$rootStorePath = "Cert:\LocalMachine\Root"
+
+if (-not (Test-Path -Path $certStorePath)) {
+    throw "LocalMachine certificate store is not available. Please run as administrator."
 }
 
-$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
-$cert.Import($PfxPath, $Password, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet)
-
-$store = New-Object System.Security.Cryptography.X509Certificates.X509Store($StoreName, $StoreLocation)
-$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-try {
-    $store.Add($cert)
-    Write-Host "Certificate installed successfully." -ForegroundColor Green
-} finally {
-    $store.Close()
+$existing = Get-ChildItem -Path $certStorePath | Where-Object { $_.Subject -eq "CN=$certName" } | Select-Object -First 1
+if (-not $existing) {
+    $existing = New-SelfSignedCertificate -DnsName "localhost", "127.0.0.1" -FriendlyName $certName -CertStoreLocation $certStorePath -NotAfter (Get-Date).AddYears(5) -KeyExportPolicy Exportable -KeyAlgorithm RSA -KeyLength 2048 -SignatureAlgorithm "SHA256"
 }
+
+$passwordSecure = ConvertTo-SecureString $Password -AsPlainText -Force
+
+$certDirectory = Split-Path -Path $PfxPath -Parent
+if (-not (Test-Path -Path $certDirectory)) {
+    New-Item -ItemType Directory -Path $certDirectory | Out-Null
+}
+
+Export-PfxCertificate -Cert $existing -FilePath $PfxPath -Password $passwordSecure -Force | Out-Null
+Import-Certificate -FilePath $PfxPath -CertStoreLocation $rootStorePath | Out-Null
+
+Write-Host "Certificate exported to $PfxPath and trusted on the local machine." -ForegroundColor Green
