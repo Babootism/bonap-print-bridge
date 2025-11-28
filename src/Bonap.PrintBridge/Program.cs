@@ -1,4 +1,5 @@
 using System.Drawing.Printing;
+using System.IO;
 using System.Net;
 using System.Reflection;
 using System.Text;
@@ -48,16 +49,36 @@ builder.WebHost.ConfigureKestrel((context, options) =>
         throw new InvalidOperationException("Kestrel certificate path is not configured.");
     }
 
+    var resolvedCertificatePath = Path.IsPathRooted(certificatePath)
+        ? certificatePath
+        : Path.GetFullPath(certificatePath, builder.Environment.ContentRootPath);
+
+    if (!File.Exists(resolvedCertificatePath))
+    {
+        var fallbackCertificatePath = Path.GetFullPath(
+            Path.Combine(builder.Environment.ContentRootPath, "..", "..", "certs", "localhost.pfx"));
+
+        if (File.Exists(fallbackCertificatePath))
+        {
+            resolvedCertificatePath = fallbackCertificatePath;
+        }
+        else
+        {
+            throw new FileNotFoundException(
+                $"Kestrel certificate not found. Checked '{resolvedCertificatePath}' and fallback '{fallbackCertificatePath}'.");
+        }
+    }
+
     var uri = new Uri(url);
     options.Listen(IPAddress.Parse(uri.Host), uri.Port, listenOptions =>
     {
         if (string.IsNullOrWhiteSpace(certificatePassword))
         {
-            listenOptions.UseHttps(certificatePath);
+            listenOptions.UseHttps(resolvedCertificatePath);
         }
         else
         {
-            listenOptions.UseHttps(certificatePath, certificatePassword);
+            listenOptions.UseHttps(resolvedCertificatePath, certificatePassword);
         }
     });
 });
