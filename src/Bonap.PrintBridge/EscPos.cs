@@ -20,5 +20,24 @@ public static class EscPos
         return $"\x1Bd{(byte)lines}";
     }
 
+    public static string OpenDrawer(int pin, int t1 = 25, int t2 = 250)
+    {
+        if (pin is not 0 and not 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pin), pin, "pin must be 0 or 1.");
+        }
+
+        ValidateByte(nameof(t1), t1);
+        ValidateByte(nameof(t2), t2);
+
+        return $"\x1Bp{(char)(byte)pin}{(char)(byte)t1}{(char)(byte)t2}";
+    }
+
+    private static void ValidateByte(string name, int value)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(value, 0, name);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 255, name);
+    }
+
     public static byte[] AsBytes(string value) => Encoding.UTF8.GetBytes(value);
 }
