@@ -15,6 +15,7 @@ public static class RawPrinterHelper
         }
 
         var bytes = Encoding.UTF8.GetBytes(data);
+ main
         var pBytes = Marshal.AllocCoTaskMem(bytes.Length);
 
         try

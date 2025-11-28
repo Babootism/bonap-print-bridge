@@ -1,3 +1,4 @@
+ main
 using System.Text;
 
 namespace Bonap.PrintBridge;
@@ -16,21 +17,7 @@ public static class Program
         }
 
         var printerName = args[0];
-        var message = string.Join(" ", args.Skip(1));
-
-        var payload = BuildReceipt(message);
-
-        if (!OperatingSystem.IsWindows())
-        {
-            Console.WriteLine("Printing is only supported on Windows. Payload generation succeeded but nothing was sent.");
-            return 0;
-        }
-
-        var sent = RawPrinterHelper.SendStringToPrinter(printerName, payload);
-        Console.WriteLine(sent
-            ? $"ESC/POS payload sent to '{printerName}'."
-            : "Failed to send payload to the printer.");
-
+ main
         return sent ? 0 : 2;
     }
 
@@ -50,9 +37,7 @@ public static class Program
         return builder.ToString();
     }
 
-    private static void ShowUsage()
-    {
-        Console.WriteLine("Usage: Bonap.PrintBridge <printerName> <message>");
+ main
         Console.WriteLine("Example: Bonap.PrintBridge \"Receipt Printer\" \"Bonjour, monde !\"");
     }
 }

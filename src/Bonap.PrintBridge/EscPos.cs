@@ -20,5 +20,6 @@ public static class EscPos
         return $"\x1Bd{(byte)lines}";
     }
 
+
     public static byte[] AsBytes(string value) => Encoding.UTF8.GetBytes(value);
 }

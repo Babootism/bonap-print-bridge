@@ -16,6 +16,7 @@ Pour envoyer un ticket de test :
 dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj "Nom de l'imprimante" "Bonjour depuis Bonap !"
 ```
 
+main
 Sur un système non Windows, la génération du payload ESC/POS fonctionne mais rien n'est envoyé à l'imprimante.
 
 ## Scripts PowerShell
