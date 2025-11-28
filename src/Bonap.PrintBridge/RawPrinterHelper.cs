@@ -7,7 +7,7 @@ namespace Bonap.PrintBridge;
 public static class RawPrinterHelper
 {
     [SupportedOSPlatform("windows")]
-    public static bool SendStringToPrinter(string printerName, string data)
+    public static bool SendStringToPrinter(string printerName, string data, string? jobName = null)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -20,7 +20,7 @@ public static class RawPrinterHelper
         try
         {
             Marshal.Copy(bytes, 0, pBytes, bytes.Length);
-            return SendBytesToPrinter(printerName, pBytes, bytes.Length);
+            return SendBytesToPrinterInternal(printerName, pBytes, bytes.Length, jobName);
         }
         finally
         {
@@ -29,7 +29,28 @@ public static class RawPrinterHelper
     }
 
     [SupportedOSPlatform("windows")]
-    private static bool SendBytesToPrinter(string printerName, IntPtr bytes, int count)
+    public static bool SendBytesToPrinter(string printerName, byte[] data, string? jobName = null)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("Raw printer access requires Windows.");
+        }
+
+        var pBytes = Marshal.AllocCoTaskMem(data.Length);
+
+        try
+        {
+            Marshal.Copy(data, 0, pBytes, data.Length);
+            return SendBytesToPrinterInternal(printerName, pBytes, data.Length, jobName);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(pBytes);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool SendBytesToPrinterInternal(string printerName, IntPtr bytes, int count, string? jobName)
     {
         if (!OpenPrinter(printerName, out var hPrinter, IntPtr.Zero))
         {
@@ -38,7 +59,7 @@ public static class RawPrinterHelper
 
         var docInfo = new DOC_INFO_1
         {
-            pDocName = "Bonap.PrintBridge Document",
+            pDocName = string.IsNullOrWhiteSpace(jobName) ? "Bonap.PrintBridge Document" : jobName,
             pDataType = "RAW"
         };
 

@@ -1,39 +1,91 @@
 # Bonap Print Bridge
 
-Passerelle minimale pour envoyer des commandes ESC/POS à une imprimante Windows via .NET 8.
+Passerelle HTTPS locale pour exposer une API d'impression ESC/POS utilisable par le POS web Bonap.
+
+## Configuration
+- `src/Bonap.PrintBridge/appsettings.json` contient les valeurs par défaut :
+  - `Bridge:Port` : `49001`
+  - `Bridge:Token` : jeton obligatoire à transmettre via l'en-tête `X-Bridge-Token`.
+  - `Bridge:DefaultPrinterName` : nom d'imprimante par défaut (optionnel).
+  - `Bridge:DefaultDrawerPin` : `0` par défaut.
+  - `Kestrel:Endpoints:Https` : écoute sur `https://127.0.0.1:49001` avec le certificat PFX généré.
+- Les logs sont écrits dans `%ProgramData%\BonapPrintBridge\logs\bridge.log`.
 
 ## Pré-requis
-- [.NET 8 SDK](https://dotnet.microsoft.com/download)
-- Windows pour l'envoi direct aux imprimantes via l'API Winspool
+- Windows (l'accès RAW à l'imprimante utilise Winspool).
+- [.NET 8 SDK](https://dotnet.microsoft.com/download).
+- Droits administrateur pour installer le certificat et le service Windows.
 
-## Construction et exécution
-```bash
-dotnet build src/Bonap.PrintBridge/Bonap.PrintBridge.csproj
+## Générer le certificat local
+```powershell
+# Depuis la racine du dépôt
+powershell -ExecutionPolicy Bypass -File .\scripts\install-cert.ps1
+# Le certificat est exporté dans certs\localhost.pfx avec le mot de passe "bonap-bridge"
 ```
 
-Pour envoyer un ticket de test :
-```bash
-dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj "Nom de l'imprimante" "Bonjour depuis Bonap !"
+## Lancer l'API en console
+```powershell
+# Depuis la racine du dépôt
+$env:ASPNETCORE_ENVIRONMENT="Development"
+dotnet run --project .\src\Bonap.PrintBridge\Bonap.PrintBridge.csproj
+```
+L'API écoute sur `https://127.0.0.1:49001` (certificat auto-signé).
+
+## Endpoints
+Tous les appels doivent inclure l'en-tête `X-Bridge-Token` correspondant à `Bridge:Token`.
+CORS autorise uniquement `Origin: https://bonap.ceramix.ovh`.
+
+- `GET /health` → `{ ok: true, version, time }`
+- `GET /printers` → `[{ name, isDefault }]`
+- `POST /print`
+  ```json
+  {
+    "printerName": "optionnel",
+    "jobName": "optionnel",
+    "dataBase64": "...",
+    "contentType": "raw-escpos"
+  }
+  ```
+- `POST /drawer/open`
+  ```json
+  { "printerName": "optionnel", "pin": 0, "t1": 25, "t2": 250 }
+  ```
+- `POST /receipt/print`
+  ```json
+  {
+    "printerName": "optionnel",
+    "text": "Texte du ticket",
+    "openDrawer": true,
+    "pin": 0
+  }
+  ```
+
+### Exemples PowerShell (Invoke-RestMethod)
+```powershell
+$token = "change-me"
+$baseUrl = "https://127.0.0.1:49001"
+
+Invoke-RestMethod -Method Get "$baseUrl/health" -Headers @{ "X-Bridge-Token" = $token } -SkipCertificateCheck
+
+Invoke-RestMethod -Method Get "$baseUrl/printers" -Headers @{ "X-Bridge-Token" = $token } -SkipCertificateCheck
+
+$raw = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("Hello ESC/POS"))
+Invoke-RestMethod -Method Post "$baseUrl/print" -Headers @{ "X-Bridge-Token" = $token } -ContentType "application/json" -Body (@{ printerName = ""; dataBase64 = $raw; contentType = "raw-escpos" } | ConvertTo-Json) -SkipCertificateCheck
+
+Invoke-RestMethod -Method Post "$baseUrl/drawer/open" -Headers @{ "X-Bridge-Token" = $token } -ContentType "application/json" -Body (@{ pin = 0 } | ConvertTo-Json) -SkipCertificateCheck
+
+Invoke-RestMethod -Method Post "$baseUrl/receipt/print" -Headers @{ "X-Bridge-Token" = $token } -ContentType "application/json" -Body (@{ text = "Ticket de test"; openDrawer = $true } | ConvertTo-Json) -SkipCertificateCheck
 ```
 
-Ouvrir le tiroir-caisse (impulsion ESC p) :
-```bash
-# impulsions par défaut t1=25, t2=250
-dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj "Nom de l'imprimante" --drawer
-
-# sélectionner la broche 2 (m=1) avec des valeurs personnalisées
-dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj "Nom de l'imprimante" --drawer1 50 200
+## Installation en service Windows
+```powershell
+# Depuis la racine du dépôt, en PowerShell administrateur
+powershell -ExecutionPolicy Bypass -File .\scripts\install-service.ps1
 ```
-
-`t1` et `t2` doivent être des entiers compris entre `0` et `255` et seront envoyés via la commande ESC/POS `ESC p m t1 t2`.
-
-Sur un système non Windows, la génération du payload ESC/POS fonctionne mais rien n'est envoyé à l'imprimante.
-
-## Scripts PowerShell
-- `scripts/install-cert.ps1` : installe un certificat PFX dans le magasin Windows.
-- `scripts/install-service.ps1` : enregistre Bonap.PrintBridge comme service Windows avec les arguments fournis.
+Le service `BonapPrintBridge` est publié en `Release`, en `win-x64`, auto-démarré et pointe vers l'exécutable généré (self-contained).
 
 ## Structure
-- `src/Bonap.PrintBridge/Program.cs` : point d'entrée, construit un ticket de test et appelle l'envoi brut.
-- `src/Bonap.PrintBridge/EscPos.cs` : helpers de commandes ESC/POS courantes.
-- `src/Bonap.PrintBridge/RawPrinterHelper.cs` : interopération Winspool pour l'impression brute (Windows uniquement).
+- `src/Bonap.PrintBridge/Program.cs` : Minimal API HTTPS + endpoints d'impression / tiroir.
+- `src/Bonap.PrintBridge/EscPos.cs` : helpers ESC/POS.
+- `src/Bonap.PrintBridge/RawPrinterHelper.cs` : interop Winspool pour l'impression brute.
+- `src/Bonap.PrintBridge/FileLoggerProvider.cs` : provider de log simple vers fichier.

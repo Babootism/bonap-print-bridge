@@ -1,30 +1,37 @@
-param (
-    [Parameter(Mandatory = $true)][string]$ExecutablePath,
-    [Parameter()][string]$ServiceName = "BonapPrintBridge",
-    [Parameter()][string]$DisplayName = "Bonap Print Bridge",
-    [Parameter()][string]$PrinterName = "Receipt Printer"
+param(
+    [string]$Configuration = "Release",
+    [string]$Runtime = "win-x64",
+    [string]$ServiceName = "BonapPrintBridge",
+    [string]$DisplayName = "Bonap Print Bridge",
+    [string]$PublishDir = (Join-Path $PSScriptRoot "..\publish")
 )
 
-Write-Host "Installing $ServiceName for printer '$PrinterName'" -ForegroundColor Cyan
+$ErrorActionPreference = "Stop"
 
-if (-not (Test-Path -Path $ExecutablePath)) {
-    throw "Executable not found: $ExecutablePath"
+$projectPath = Join-Path $PSScriptRoot "..\src\Bonap.PrintBridge\Bonap.PrintBridge.csproj"
+Write-Host "Publishing $projectPath" -ForegroundColor Cyan
+
+$publishCmd = "dotnet publish `"$projectPath`" -c $Configuration -r $Runtime --self-contained true -o `"$PublishDir`""
+Write-Host $publishCmd -ForegroundColor Yellow
+Invoke-Expression $publishCmd
+
+$exePath = Join-Path $PublishDir "Bonap.PrintBridge.exe"
+if (-not (Test-Path -Path $exePath)) {
+    throw "Executable not found at $exePath"
 }
-
-$arguments = "`"$PrinterName`" Test depuis le service"
 
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
-    Write-Host "Service already exists. Stopping and deleting..." -ForegroundColor Yellow
+    Write-Host "Service already exists. Stopping and removing..." -ForegroundColor Yellow
     Stop-Service -Name $ServiceName -ErrorAction SilentlyContinue
     sc.exe delete $ServiceName | Out-Null
     Start-Sleep -Seconds 2
 }
 
-$createResult = sc.exe create $ServiceName binPath= "`"$ExecutablePath`" $arguments" DisplayName= "$DisplayName" start= auto
-Write-Host $createResult
+$create = sc.exe create $ServiceName binPath= "`"$exePath`"" DisplayName= "$DisplayName" start= auto
+Write-Host $create
 
-sc.exe description $ServiceName "Passerelle d'impression ESC/POS" | Out-Null
+sc.exe description $ServiceName "Bonap Print Bridge local HTTPS API" | Out-Null
+
 Start-Service -Name $ServiceName
-
-Write-Host "Service installed and started." -ForegroundColor Green
+Write-Host "Service $ServiceName installed and started." -ForegroundColor Green
