@@ -2,12 +2,14 @@ using Bonap.PrintBridge;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Options;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -36,6 +38,9 @@ builder.Logging.AddSimpleConsole(options =>
 });
 builder.Logging.AddProvider(new FileLoggerProvider(logPath));
 
+var loggerFactory = builder.Logging.Services.BuildServiceProvider().GetRequiredService<ILoggerFactory>();
+var kestrelLogger = loggerFactory.CreateLogger("KestrelConfig");
+
 builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Bridge"));
 builder.Services.AddCors(options =>
 {
@@ -49,30 +54,43 @@ builder.Services.AddCors(options =>
 
 builder.WebHost.ConfigureKestrel((context, options) =>
 {
+    var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    void ListenOnce(IPAddress ip, int port, Action<ListenOptions>? configure = null)
+    {
+        var key = $"{ip}:{port}";
+        if (!used.Add(key)) return;
+
+        if (configure == null) options.Listen(ip, port);
+        else options.Listen(ip, port, configure);
+    }
+
     var endpointSection = context.Configuration.GetSection("Kestrel:Endpoints:Https");
     var configuredUrl = endpointSection.GetValue<string>("Url");
-    var url = string.IsNullOrWhiteSpace(configuredUrl)
-        ? $"https://127.0.0.1:{defaultPort}"
-        : configuredUrl;
     var certificateSection = endpointSection.GetSection("Certificate");
     var certificatePath = certificateSection.GetValue<string>("Path");
     var certificatePassword = certificateSection.GetValue<string>("Password");
-
-    var uriBuilder = new UriBuilder(url);
-    var uri = uriBuilder.Uri;
-    var httpsHost = uri.Host;
-    httpsPort = uri.Port > 0 ? uri.Port : defaultPort;
 
     var resolvedPath = ResolveCertificatePath(
         certificatePath,
         builder.Environment.ContentRootPath,
         out certificatePathAttempts);
 
-    var httpsAddress = IPAddress.TryParse(httpsHost, out var parsedHost)
-        ? parsedHost
-        : IPAddress.Loopback;
+    var preferredPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : 49001;
 
-    options.Listen(httpsAddress, httpsPort.Value, listenOptions =>
+    if (!string.IsNullOrWhiteSpace(configuredUrl))
+    {
+        var uri = new UriBuilder(configuredUrl).Uri;
+        if (uri.Port > 0) preferredPort = uri.Port;
+    }
+
+    var httpsIp = IPAddress.Loopback;
+    var httpsPortFinal = PickFreePort(httpsIp, preferredPort);
+
+    httpsPort = httpsPortFinal;
+
+    kestrelLogger.LogInformation("Selected HTTPS port: {Port}", httpsPortFinal);
+
+    ListenOnce(httpsIp, httpsPortFinal, listenOptions =>
     {
         if (string.IsNullOrWhiteSpace(certificatePassword))
         {
@@ -88,17 +106,12 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 
     if (bridgeOptions.EnableHttp)
     {
-        var desiredHttpPort = bridgeOptions.HttpPort > 0
-            ? bridgeOptions.HttpPort
-            : (httpsPort ?? defaultPort) + 1;
+        var desiredHttp = bridgeOptions.HttpPort > 0 ? bridgeOptions.HttpPort : httpsPortFinal + 1;
+        var httpFinal = PickFreePort(IPAddress.Loopback, desiredHttp);
+        httpPort = httpFinal;
 
-        while (httpsPort.HasValue && desiredHttpPort == httpsPort.Value)
-        {
-            desiredHttpPort++;
-        }
-
-        httpPort = desiredHttpPort;
-        options.Listen(IPAddress.Loopback, httpPort.Value);
+        kestrelLogger.LogInformation("Selected HTTP port: {Port}", httpFinal);
+        ListenOnce(IPAddress.Loopback, httpFinal);
     }
 });
 
@@ -306,7 +319,10 @@ try
     app.Run();
     return 0;
 }
-catch (AddressInUseException ex)
+catch (Exception ex) when (
+    ex is AddressInUseException ||
+    (ex is IOException && ex.InnerException is SocketException se && se.SocketErrorCode == SocketError.AddressAlreadyInUse)
+)
 {
     app.Logger.LogCritical(
         ex,
@@ -315,6 +331,32 @@ catch (AddressInUseException ex)
         httpPort ?? httpsPort ?? defaultPort,
         httpPort ?? httpsPort ?? defaultPort);
     return 1;
+}
+
+static bool CanBind(IPAddress ip, int port)
+{
+    try
+    {
+        var listener = new System.Net.Sockets.TcpListener(ip, port);
+        listener.Server.ExclusiveAddressUse = true;
+        listener.Start();
+        listener.Stop();
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+static int PickFreePort(IPAddress ip, int preferred, int maxTries = 200)
+{
+    if (preferred <= 0) preferred = 49001;
+
+    for (var p = preferred; p < preferred + maxTries; p++)
+        if (CanBind(ip, p)) return p;
+
+    throw new InvalidOperationException($"No free port found starting at {preferred} (tries={maxTries}).");
 }
 
 static bool IsAuthorized(HttpContext context, string? expectedToken)
