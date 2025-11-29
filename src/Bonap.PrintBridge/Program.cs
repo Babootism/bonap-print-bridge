@@ -1,11 +1,14 @@
+using Bonap.PrintBridge;
+using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.Options;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Reflection;
 using System.Text;
-using Bonap.PrintBridge;
-using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +21,7 @@ builder.Configuration
 var bridgeOptions = builder.Configuration.GetSection("Bridge").Get<BridgeOptions>() ?? new BridgeOptions();
 var httpsEnabled = true;
 string[]? certificatePathAttempts = null;
+var selectedPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : 49001;
 
 var logPath = EnsureLogPath();
 builder.Logging.ClearProviders();
@@ -42,7 +46,10 @@ builder.Services.AddCors(options =>
 builder.WebHost.ConfigureKestrel((context, options) =>
 {
     var endpointSection = context.Configuration.GetSection("Kestrel:Endpoints:Https");
-    var url = endpointSection.GetValue<string>("Url") ?? $"https://127.0.0.1:{bridgeOptions.Port}";
+    var configuredUrl = endpointSection.GetValue<string>("Url");
+    var url = string.IsNullOrWhiteSpace(configuredUrl)
+        ? $"https://127.0.0.1:{selectedPort}"
+        : configuredUrl;
     var certificateSection = endpointSection.GetSection("Certificate");
     var certificatePath = certificateSection.GetValue<string>("Path");
     var certificatePassword = certificateSection.GetValue<string>("Password");
@@ -71,7 +78,12 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 
     if (!string.IsNullOrEmpty(resolvedPath))
     {
-        var uri = new Uri(url);
+        var uriBuilder = new UriBuilder(url)
+        {
+            Port = selectedPort
+        };
+        var uri = uriBuilder.Uri;
+        selectedPort = uri.Port;
         options.Listen(IPAddress.Parse(uri.Host), uri.Port, listenOptions =>
         {
             if (string.IsNullOrWhiteSpace(certificatePassword))
@@ -89,7 +101,8 @@ builder.WebHost.ConfigureKestrel((context, options) =>
     else
     {
         httpsEnabled = false;
-        options.Listen(IPAddress.Loopback, bridgeOptions.Port);
+        selectedPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : selectedPort;
+        options.Listen(IPAddress.Loopback, selectedPort);
     }
 });
 
@@ -132,15 +145,20 @@ app.Use(async (context, next) =>
     await next();
 });
 
-app.MapGet("/health", () =>
+app.MapGet("/health", (IServiceProvider services) =>
 {
     var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+    var addressesFeature = services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();
+    var listeningUrls = addressesFeature?.Addresses?.ToArray() ?? Array.Empty<string>();
+
     return Results.Ok(new
     {
         ok = true,
         httpsEnabled,
         version,
-        time = DateTimeOffset.UtcNow
+        time = DateTimeOffset.UtcNow,
+        port = selectedPort,
+        listeningUrls
     });
 });
 
@@ -261,7 +279,19 @@ app.MapPost("/receipt/print", (ReceiptRequest request, IOptions<BridgeOptions> o
         : Results.Problem("Failed to send receipt to printer.", statusCode: StatusCodes.Status502BadGateway);
 });
 
-app.Run();
+try
+{
+    app.Run();
+    return 0;
+}
+catch (AddressInUseException ex)
+{
+    app.Logger.LogCritical(
+        ex,
+        "Failed to bind to port {Port}. Another process is already listening. Identify and stop the conflicting process (e.g., use `netstat -ano | find \"{Port}\"` or `lsof -i :{Port}` to find and kill the PID).",
+        selectedPort);
+    return 1;
+}
 
 static bool IsAuthorized(HttpContext context, string? expectedToken)
 {
