@@ -45,9 +45,9 @@ internal static class PrinterInfoProvider
             for (var i = 0; i < printersReturned; i++)
             {
                 var info = Marshal.PtrToStructure<PRINTER_INFO_4>(current);
-                if (info != null && !string.IsNullOrWhiteSpace(info.Value.pPrinterName))
+                if (!string.IsNullOrWhiteSpace(info.pPrinterName))
                 {
-                    result.Add(info.Value.pPrinterName);
+                    result.Add(info.pPrinterName);
                 }
 
                 current = IntPtr.Add(current, structSize);
