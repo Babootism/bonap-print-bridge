@@ -2,7 +2,7 @@ using Bonap.PrintBridge;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Options;
 using System.Collections.Generic;
@@ -38,9 +38,6 @@ builder.Logging.AddSimpleConsole(options =>
 });
 builder.Logging.AddProvider(new FileLoggerProvider(logPath));
 
-var loggerFactory = builder.Logging.Services.BuildServiceProvider().GetRequiredService<ILoggerFactory>();
-var kestrelLogger = loggerFactory.CreateLogger("KestrelConfig");
-
 builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Bridge"));
 builder.Services.AddCors(options =>
 {
@@ -54,6 +51,14 @@ builder.Services.AddCors(options =>
 
 builder.WebHost.ConfigureKestrel((context, options) =>
 {
+    var filteredConfig = new ConfigurationBuilder()
+        .AddInMemoryCollection(
+            context.Configuration.AsEnumerable()
+                .Where(kv => kv.Key is null || !kv.Key.StartsWith("Kestrel:Endpoints", StringComparison.OrdinalIgnoreCase)))
+        .Build();
+
+    options.Configure(filteredConfig.GetSection("Kestrel"), reloadOnChange: false);
+
     var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     void ListenOnce(IPAddress ip, int port, Action<ListenOptions>? configure = null)
     {
@@ -88,8 +93,6 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 
     httpsPort = httpsPortFinal;
 
-    kestrelLogger.LogInformation("Selected HTTPS port: {Port}", httpsPortFinal);
-
     ListenOnce(httpsIp, httpsPortFinal, listenOptions =>
     {
         if (string.IsNullOrWhiteSpace(certificatePassword))
@@ -109,8 +112,6 @@ builder.WebHost.ConfigureKestrel((context, options) =>
         var desiredHttp = bridgeOptions.HttpPort > 0 ? bridgeOptions.HttpPort : httpsPortFinal + 1;
         var httpFinal = PickFreePort(IPAddress.Loopback, desiredHttp);
         httpPort = httpFinal;
-
-        kestrelLogger.LogInformation("Selected HTTP port: {Port}", httpFinal);
         ListenOnce(IPAddress.Loopback, httpFinal);
     }
 });
