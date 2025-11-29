@@ -5,5 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Bonap.PrintBridge</RootNamespace>
     <AssemblyName>Bonap.PrintBridge</AssemblyName>
+    <UseSystemDrawing>false</UseSystemDrawing>
   </PropertyGroup>
 </Project>
