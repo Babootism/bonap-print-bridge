@@ -20,9 +20,11 @@ builder.Configuration
     .AddEnvironmentVariables();
 
 var bridgeOptions = builder.Configuration.GetSection("Bridge").Get<BridgeOptions>() ?? new BridgeOptions();
-var httpsEnabled = true;
+var httpsEnabled = false;
 string[]? certificatePathAttempts = null;
-var selectedPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : 49001;
+int? httpsPort = null;
+int? httpPort = null;
+var defaultPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : 49001;
 
 var logPath = EnsureLogPath();
 builder.Logging.ClearProviders();
@@ -49,7 +51,7 @@ builder.WebHost.ConfigureKestrel((context, options) =>
     var endpointSection = context.Configuration.GetSection("Kestrel:Endpoints:Https");
     var configuredUrl = endpointSection.GetValue<string>("Url");
     var url = string.IsNullOrWhiteSpace(configuredUrl)
-        ? $"https://127.0.0.1:{selectedPort}"
+        ? $"https://127.0.0.1:{defaultPort}"
         : configuredUrl;
     var certificateSection = endpointSection.GetSection("Certificate");
     var certificatePath = certificateSection.GetValue<string>("Path");
@@ -77,14 +79,11 @@ builder.WebHost.ConfigureKestrel((context, options) =>
     var resolvedPath = attemptedPaths.FirstOrDefault(File.Exists);
     certificatePathAttempts = attemptedPaths.ToArray();
 
-    if (!string.IsNullOrEmpty(resolvedPath))
+    if (!string.IsNullOrEmpty(resolvedPath) && File.Exists(resolvedPath))
     {
-        var uriBuilder = new UriBuilder(url)
-        {
-            Port = selectedPort
-        };
+        var uriBuilder = new UriBuilder(url);
         var uri = uriBuilder.Uri;
-        selectedPort = uri.Port;
+        httpsPort = uri.Port;
         options.Listen(IPAddress.Parse(uri.Host), uri.Port, listenOptions =>
         {
             if (string.IsNullOrWhiteSpace(certificatePassword))
@@ -99,11 +98,25 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 
         httpsEnabled = true;
     }
-    else
+
+    if (!httpsEnabled)
     {
-        httpsEnabled = false;
-        selectedPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : selectedPort;
-        options.Listen(IPAddress.Loopback, selectedPort);
+        httpPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : defaultPort;
+        options.Listen(IPAddress.Loopback, httpPort.Value);
+    }
+    else if (bridgeOptions.EnableHttp)
+    {
+        var desiredHttpPort = bridgeOptions.HttpPort > 0
+            ? bridgeOptions.HttpPort
+            : (httpsPort ?? defaultPort) + 1;
+
+        if (httpsPort.HasValue && desiredHttpPort == httpsPort.Value)
+        {
+            desiredHttpPort++;
+        }
+
+        httpPort = desiredHttpPort;
+        options.Listen(IPAddress.Loopback, httpPort.Value);
     }
 });
 
@@ -160,7 +173,8 @@ app.MapGet("/health", (IServiceProvider services) =>
         httpsEnabled,
         version,
         time = DateTimeOffset.UtcNow,
-        port = selectedPort,
+        httpsPort,
+        httpPort,
         listeningUrls
     });
 });
@@ -322,9 +336,9 @@ catch (AddressInUseException ex)
     app.Logger.LogCritical(
         ex,
         "Failed to bind to port {Port}. Another process is already listening. Identify and stop the conflicting process (e.g., use `netstat -ano | find \"{PortNetstat}\"` or `lsof -i :{PortLsof}` to find and kill the PID).",
-        selectedPort,
-        selectedPort,
-        selectedPort);
+        httpPort ?? httpsPort ?? defaultPort,
+        httpPort ?? httpsPort ?? defaultPort,
+        httpPort ?? httpsPort ?? defaultPort);
     return 1;
 }
 
@@ -409,6 +423,10 @@ internal record ReceiptRequest(string? PrinterName, string Text, bool OpenDrawer
 internal class BridgeOptions
 {
     public int Port { get; set; } = 49001;
+
+    public bool EnableHttp { get; set; }
+
+    public int HttpPort { get; set; } = 49002;
 
     public string? Token { get; set; }
 

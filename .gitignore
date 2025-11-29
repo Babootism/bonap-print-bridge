@@ -1,0 +1,5 @@
+**/bin/
+**/obj/
+certs/
+src/Bonap.PrintBridge/certs/
+
