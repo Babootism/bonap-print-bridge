@@ -32,6 +32,24 @@ Export-PfxCertificate -Cert $existing -FilePath $PfxPath -Password $passwordSecu
 Export-Certificate -Cert $existing -FilePath $CerPath -Type CERT -Force | Out-Null
 Import-Certificate -FilePath $CerPath -CertStoreLocation $rootStorePath | Out-Null
 
+function Ensure-Directory([string]$Path) {
+    if (-not (Test-Path -Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+}
+
+$programData = [Environment]::GetFolderPath('CommonApplicationData')
+$programDataCertDir = Join-Path $programData 'BonapPrintBridge\\certs'
+$projectCertDir = Join-Path $PSScriptRoot '..\\src\\Bonap.PrintBridge\\certs'
+
+Ensure-Directory -Path $programDataCertDir
+Ensure-Directory -Path $projectCertDir
+
+Copy-Item -Path $PfxPath -Destination (Join-Path $programDataCertDir 'localhost.pfx') -Force
+Copy-Item -Path $CerPath -Destination (Join-Path $programDataCertDir 'localhost.cer') -Force
+Copy-Item -Path $PfxPath -Destination (Join-Path $projectCertDir 'localhost.pfx') -Force
+Copy-Item -Path $CerPath -Destination (Join-Path $projectCertDir 'localhost.cer') -Force
+
 Write-Host "Certificate exported and trusted." -ForegroundColor Green
 Write-Host "PfxPath: $PfxPath"
 Write-Host "Password: $Password"

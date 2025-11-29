@@ -2,6 +2,11 @@
 
 Passerelle HTTPS locale pour exposer une API d'impression ESC/POS utilisable par le POS web Bonap.
 
+## Démarrage rapide (dev)
+- `./scripts/install-cert.ps1`
+- `dotnet run --project src/Bonap.PrintBridge/Bonap.PrintBridge.csproj`
+- `curl -k https://127.0.0.1:49001/health`
+
 ## Configuration
 - `src/Bonap.PrintBridge/appsettings.json` contient les valeurs par défaut :
   - `Bridge:Port` : `49001`

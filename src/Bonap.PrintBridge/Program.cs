@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 
@@ -57,60 +58,41 @@ builder.WebHost.ConfigureKestrel((context, options) =>
     var certificatePath = certificateSection.GetValue<string>("Path");
     var certificatePassword = certificateSection.GetValue<string>("Password");
 
-    var attemptedPaths = new List<string>();
+    var uriBuilder = new UriBuilder(url);
+    var uri = uriBuilder.Uri;
+    var httpsHost = uri.Host;
+    httpsPort = uri.Port > 0 ? uri.Port : defaultPort;
 
-    if (!string.IsNullOrWhiteSpace(certificatePath))
+    var resolvedPath = ResolveCertificatePath(
+        certificatePath,
+        builder.Environment.ContentRootPath,
+        out certificatePathAttempts);
+
+    var httpsAddress = IPAddress.TryParse(httpsHost, out var parsedHost)
+        ? parsedHost
+        : IPAddress.Loopback;
+
+    options.Listen(httpsAddress, httpsPort.Value, listenOptions =>
     {
-        var resolvedCertificatePath = Path.IsPathRooted(certificatePath)
-            ? certificatePath
-            : Path.GetFullPath(certificatePath, builder.Environment.ContentRootPath);
-
-        attemptedPaths.Add(resolvedCertificatePath);
-    }
-
-    var fallbackCertificatePath = Path.GetFullPath(
-        Path.Combine(builder.Environment.ContentRootPath, "..", "..", "certs", "localhost.pfx"));
-
-    if (!attemptedPaths.Contains(fallbackCertificatePath, StringComparer.OrdinalIgnoreCase))
-    {
-        attemptedPaths.Add(fallbackCertificatePath);
-    }
-
-    var resolvedPath = attemptedPaths.FirstOrDefault(File.Exists);
-    certificatePathAttempts = attemptedPaths.ToArray();
-
-    if (!string.IsNullOrEmpty(resolvedPath) && File.Exists(resolvedPath))
-    {
-        var uriBuilder = new UriBuilder(url);
-        var uri = uriBuilder.Uri;
-        httpsPort = uri.Port;
-        options.Listen(IPAddress.Parse(uri.Host), uri.Port, listenOptions =>
+        if (string.IsNullOrWhiteSpace(certificatePassword))
         {
-            if (string.IsNullOrWhiteSpace(certificatePassword))
-            {
-                listenOptions.UseHttps(resolvedPath);
-            }
-            else
-            {
-                listenOptions.UseHttps(resolvedPath, certificatePassword);
-            }
-        });
+            listenOptions.UseHttps(resolvedPath);
+        }
+        else
+        {
+            listenOptions.UseHttps(resolvedPath, certificatePassword);
+        }
+    });
 
-        httpsEnabled = true;
-    }
+    httpsEnabled = true;
 
-    if (!httpsEnabled)
-    {
-        httpPort = bridgeOptions.Port > 0 ? bridgeOptions.Port : defaultPort;
-        options.Listen(IPAddress.Loopback, httpPort.Value);
-    }
-    else if (bridgeOptions.EnableHttp)
+    if (bridgeOptions.EnableHttp)
     {
         var desiredHttpPort = bridgeOptions.HttpPort > 0
             ? bridgeOptions.HttpPort
             : (httpsPort ?? defaultPort) + 1;
 
-        if (httpsPort.HasValue && desiredHttpPort == httpsPort.Value)
+        while (httpsPort.HasValue && desiredHttpPort == httpsPort.Value)
         {
             desiredHttpPort++;
         }
@@ -121,13 +103,6 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 });
 
 var app = builder.Build();
-
-if (!httpsEnabled)
-{
-    app.Logger.LogWarning(
-        "HTTPS is disabled because no certificate was found. Tried paths: {Paths}",
-        certificatePathAttempts ?? Array.Empty<string>());
-}
 
 app.UseCors("BonapPrintBridgeCors");
 
@@ -414,6 +389,56 @@ static IEnumerable<string> ReadLastLines(string path, int lineCount)
     return lines;
 }
 
+static string ResolveCertificatePath(string? configuredPath, string contentRoot, out string[]? attempts)
+{
+    var attemptedPaths = new List<string>();
+
+    if (!string.IsNullOrWhiteSpace(configuredPath))
+    {
+        var resolvedCertificatePath = Path.IsPathRooted(configuredPath)
+            ? configuredPath
+            : Path.GetFullPath(configuredPath, contentRoot);
+
+        attemptedPaths.Add(resolvedCertificatePath);
+    }
+
+    var repoRootCandidate = ResolveRepoRootCertPath(contentRoot);
+    if (!string.IsNullOrWhiteSpace(repoRootCandidate))
+    {
+        attemptedPaths.Add(repoRootCandidate);
+    }
+
+    var appContextPath = Path.Combine(AppContext.BaseDirectory, "certs", "localhost.pfx");
+    attemptedPaths.Add(appContextPath);
+
+    var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+    var programDataPath = Path.Combine(programData, "BonapPrintBridge", "certs", "localhost.pfx");
+    attemptedPaths.Add(programDataPath);
+
+    var resolvedPath = attemptedPaths.FirstOrDefault(File.Exists);
+    attempts = attemptedPaths.ToArray();
+
+    if (string.IsNullOrEmpty(resolvedPath))
+    {
+        throw new InvalidOperationException(
+            $"No HTTPS certificate found. Checked paths: {string.Join(", ", attemptedPaths)}");
+    }
+
+    return resolvedPath;
+}
+
+static string? ResolveRepoRootCertPath(string contentRoot)
+{
+    var directoryName = new DirectoryInfo(contentRoot).Name;
+    if (!directoryName.Equals("Bonap.PrintBridge", StringComparison.OrdinalIgnoreCase))
+    {
+        return null;
+    }
+
+    var repoRoot = Path.GetFullPath(Path.Combine(contentRoot, "..", ".."));
+    return Path.Combine(repoRoot, "certs", "localhost.pfx");
+}
+
 internal record PrintRequest(string? PrinterName, string? JobName, string DataBase64, string ContentType);
 
 internal record DrawerRequest(string? PrinterName, int? Pin, int? T1, int? T2);
@@ -426,7 +451,7 @@ internal class BridgeOptions
 
     public bool EnableHttp { get; set; }
 
-    public int HttpPort { get; set; } = 49002;
+    public int HttpPort { get; set; }
 
     public string? Token { get; set; }
 
