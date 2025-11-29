@@ -31,6 +31,25 @@ dotnet run --project .\src\Bonap.PrintBridge\Bonap.PrintBridge.csproj
 ```
 L'API écoute sur `https://127.0.0.1:49001` (certificat auto-signé).
 
+## Manager WPF (Windows)
+Une application WPF permet de piloter le bridge local en HTTPS (Option 2).
+
+- Ouvrir `Bonap.PrintBridge.sln` dans Visual Studio (workload .NET Desktop/WPF requis) puis définir `Bonap.PrintBridge.Manager` comme projet de démarrage. Vous pouvez aussi lancer directement :
+
+```powershell
+dotnet run --project .\src\Bonap.PrintBridge.Manager\Bonap.PrintBridge.Manager.csproj
+```
+
+- Par défaut, le manager pointe sur `https://127.0.0.1:49001` avec l'option "Ignore certificate errors for localhost" activée pour accepter le certificat auto-signé. Renseignez le token du bridge dans l'onglet Settings (non stocké en dur) puis cliquez sur **Save**.
+- Les commandes disponibles correspondent aux endpoints `/health`, `/printers`, `/receipt/print`, `/drawer/open` et `/logs/tail`. Le panneau Status interroge `/health` toutes les 3 secondes, la liste des imprimantes se recharge via **Refresh printers** et les logs via **Refresh logs**.
+- Les paramètres sont sauvegardés dans `%ProgramData%\BonapPrintBridge\manager.json` sur la machine Windows.
+
+### Publier le manager
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-manager.ps1
+# Le build est publié en win-x64 dans publish\manager
+```
+
 ## Endpoints
 Tous les appels doivent inclure l'en-tête `X-Bridge-Token` correspondant à `Bridge:Token`, sauf `GET /health` qui reste publique. CORS autorise uniquement `Origin: https://bonap.ceramix.ovh`.
 
