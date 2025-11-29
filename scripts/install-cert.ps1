@@ -1,5 +1,6 @@
 param(
     [string]$PfxPath = (Join-Path $PSScriptRoot "..\certs\localhost.pfx"),
+    [string]$CerPath = (Join-Path $PSScriptRoot "..\certs\localhost.cer"),
     [string]$Password = "bonap-bridge"
 )
 
@@ -17,7 +18,7 @@ if (-not (Test-Path -Path $certStorePath)) {
 
 $existing = Get-ChildItem -Path $certStorePath | Where-Object { $_.Subject -eq "CN=$certName" } | Select-Object -First 1
 if (-not $existing) {
-    $existing = New-SelfSignedCertificate -DnsName "localhost", "127.0.0.1" -FriendlyName $certName -CertStoreLocation $certStorePath -NotAfter (Get-Date).AddYears(5) -KeyExportPolicy Exportable -KeyAlgorithm RSA -KeyLength 2048 -SignatureAlgorithm "SHA256"
+    $existing = New-SelfSignedCertificate -DnsName "localhost", "127.0.0.1" -FriendlyName $certName -CertStoreLocation $certStorePath -NotAfter (Get-Date).AddYears(5) -KeyExportPolicy Exportable -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256
 }
 
 $passwordSecure = ConvertTo-SecureString $Password -AsPlainText -Force
@@ -28,6 +29,10 @@ if (-not (Test-Path -Path $certDirectory)) {
 }
 
 Export-PfxCertificate -Cert $existing -FilePath $PfxPath -Password $passwordSecure -Force | Out-Null
-Import-Certificate -FilePath $PfxPath -CertStoreLocation $rootStorePath | Out-Null
+Export-Certificate -Cert $existing -FilePath $CerPath -Type CERT -Force | Out-Null
+Import-Certificate -FilePath $CerPath -CertStoreLocation $rootStorePath | Out-Null
 
-Write-Host "Certificate exported to $PfxPath and trusted on the local machine." -ForegroundColor Green
+Write-Host "Certificate exported and trusted." -ForegroundColor Green
+Write-Host "PfxPath: $PfxPath"
+Write-Host "Password: $Password"
+Write-Host "Thumbprint: $($existing.Thumbprint)"
