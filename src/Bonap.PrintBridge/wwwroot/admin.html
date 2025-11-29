@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bonap Print Bridge - Admin</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; color: #222; }
+    header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    h1 { margin: 0; font-size: 1.4rem; }
+    .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 16px; margin-top: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    label { display: block; font-weight: bold; margin-bottom: 6px; }
+    select, textarea, input[type="text"] { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.95rem; }
+    textarea { min-height: 120px; resize: vertical; }
+    button { padding: 10px 14px; border: none; border-radius: 4px; background: #0b74de; color: #fff; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #555; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status { display: flex; gap: 8px; align-items: center; }
+    .status-indicator { width: 12px; height: 12px; border-radius: 50%; background: #ccc; display: inline-block; }
+    .status-indicator.ok { background: #17a34a; }
+    .status-indicator.fail { background: #c53030; }
+    #logs { background: #0f172a; color: #e2e8f0; font-family: Consolas, monospace; padding: 12px; border-radius: 4px; min-height: 220px; white-space: pre-wrap; overflow-y: auto; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    small { color: #555; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Bonap Print Bridge - Admin</h1>
+    <div class="inline">
+      <label for="token">X-Bridge-Token</label>
+      <input type="text" id="token" placeholder="Enter token" />
+      <button id="saveToken">Save token</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="status">
+      <span id="statusDot" class="status-indicator"></span>
+      <div>
+        <div><strong>Status:</strong> <span id="statusText">Unknown</span></div>
+        <div id="healthDetails"><small>Loading health...</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <label for="printer">Printer</label>
+      <select id="printer"></select>
+      <div class="actions" style="margin-top: 12px;">
+        <button id="testTicket">Test ticket</button>
+        <button id="openDrawer">Open drawer (PIN0)</button>
+      </div>
+      <div style="margin-top: 12px;">
+        <label for="ticketText">Ticket text</label>
+        <textarea id="ticketText">*** Bonap Print Bridge ***\nTest ticket\n\n</textarea>
+        <div class="inline" style="margin-top: 8px;">
+          <input type="checkbox" id="openDrawerAfter" />
+          <label for="openDrawerAfter" style="margin: 0; font-weight: normal;">Open drawer after ticket</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="inline" style="justify-content: space-between;">
+        <h3 style="margin: 0;">Logs</h3>
+        <button id="refreshLogs" class="secondary">Refresh logs</button>
+      </div>
+      <div id="logs" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script>
+    const tokenInput = document.getElementById('token');
+    const saveTokenButton = document.getElementById('saveToken');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const healthDetails = document.getElementById('healthDetails');
+    const printerSelect = document.getElementById('printer');
+    const ticketText = document.getElementById('ticketText');
+    const testTicketButton = document.getElementById('testTicket');
+    const openDrawerButton = document.getElementById('openDrawer');
+    const openDrawerAfter = document.getElementById('openDrawerAfter');
+    const refreshLogsButton = document.getElementById('refreshLogs');
+    const logsPanel = document.getElementById('logs');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    const storedToken = localStorage.getItem('bridge-token');
+    if (urlToken) {
+      tokenInput.value = urlToken;
+      localStorage.setItem('bridge-token', urlToken);
+    } else if (storedToken) {
+      tokenInput.value = storedToken;
+    }
+
+    saveTokenButton.addEventListener('click', () => {
+      localStorage.setItem('bridge-token', tokenInput.value.trim());
+      alert('Token saved locally.');
+    });
+
+    function getToken() {
+      return tokenInput.value.trim();
+    }
+
+    async function fetchJson(url, options = {}) {
+      const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+      const token = getToken();
+      if (token) {
+        headers['X-Bridge-Token'] = token;
+      }
+
+      const response = await fetch(url, { ...options, headers });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status} ${response.statusText} - ${text}`);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return response.json();
+      }
+      return response.text();
+    }
+
+    function setStatus(ok, details) {
+      statusDot.classList.toggle('ok', ok);
+      statusDot.classList.toggle('fail', !ok);
+      statusText.textContent = ok ? 'Online' : 'Offline';
+      healthDetails.innerHTML = details;
+    }
+
+    async function loadHealth() {
+      try {
+        const data = await fetchJson('/health');
+        const urls = (data.listeningUrls || []).join('<br>');
+        setStatus(true, `Version: ${data.version || 'n/a'}<br>HTTPS: ${data.httpsEnabled}<br>Port: ${data.port}<br>Time: ${data.time}<br>URLs: ${urls}`);
+      } catch (err) {
+        setStatus(false, `Error: ${err.message}`);
+      }
+    }
+
+    async function loadPrinters() {
+      printerSelect.innerHTML = '';
+      try {
+        const printers = await fetchJson('/printers');
+        if (!printers || printers.length === 0) {
+          const option = document.createElement('option');
+          option.text = 'No printers';
+          printerSelect.add(option);
+          return;
+        }
+
+        printers.forEach(p => {
+          const option = document.createElement('option');
+          option.value = p.name;
+          option.text = p.isDefault ? `${p.name} (default)` : p.name;
+          printerSelect.add(option);
+        });
+      } catch (err) {
+        const option = document.createElement('option');
+        option.text = `Error: ${err.message}`;
+        printerSelect.add(option);
+      }
+    }
+
+    async function sendReceipt(openDrawerFlag) {
+      testTicketButton.disabled = true;
+      try {
+        const body = {
+          printerName: printerSelect.value || undefined,
+          text: ticketText.value,
+          openDrawer: openDrawerFlag,
+          pin: 0
+        };
+        await fetchJson('/receipt/print', { method: 'POST', body: JSON.stringify(body) });
+        alert('Ticket sent.');
+      } catch (err) {
+        alert(`Failed to print: ${err.message}`);
+      } finally {
+        testTicketButton.disabled = false;
+      }
+    }
+
+    async function openDrawer() {
+      openDrawerButton.disabled = true;
+      try {
+        const body = { printerName: printerSelect.value || undefined, pin: 0 };
+        await fetchJson('/drawer/open', { method: 'POST', body: JSON.stringify(body) });
+        alert('Drawer command sent.');
+      } catch (err) {
+        alert(`Failed to open drawer: ${err.message}`);
+      } finally {
+        openDrawerButton.disabled = false;
+      }
+    }
+
+    async function loadLogs() {
+      refreshLogsButton.disabled = true;
+      try {
+        const text = await fetchJson('/logs/tail?lines=200', { headers: { 'Accept': 'text/plain' } });
+        logsPanel.textContent = text || '[empty]';
+        logsPanel.scrollTop = logsPanel.scrollHeight;
+      } catch (err) {
+        logsPanel.textContent = `Failed to load logs: ${err.message}`;
+      } finally {
+        refreshLogsButton.disabled = false;
+      }
+    }
+
+    testTicketButton.addEventListener('click', () => sendReceipt(openDrawerAfter.checked));
+    openDrawerButton.addEventListener('click', openDrawer);
+    refreshLogsButton.addEventListener('click', loadLogs);
+
+    loadHealth();
+    loadPrinters();
+    loadLogs();
+  </script>
+</body>
+</html>

@@ -32,10 +32,9 @@ dotnet run --project .\src\Bonap.PrintBridge\Bonap.PrintBridge.csproj
 L'API écoute sur `https://127.0.0.1:49001` (certificat auto-signé).
 
 ## Endpoints
-Tous les appels doivent inclure l'en-tête `X-Bridge-Token` correspondant à `Bridge:Token`.
-CORS autorise uniquement `Origin: https://bonap.ceramix.ovh`.
+Tous les appels doivent inclure l'en-tête `X-Bridge-Token` correspondant à `Bridge:Token`, sauf `GET /health` qui reste publique. CORS autorise uniquement `Origin: https://bonap.ceramix.ovh`.
 
-- `GET /health` → `{ ok: true, version, time }`
+- `GET /health` → `{ ok: true, version, time, httpsEnabled, port, listeningUrls }`
 - `GET /printers` → `[{ name, isDefault }]`
 - `POST /print`
   ```json
@@ -59,6 +58,11 @@ CORS autorise uniquement `Origin: https://bonap.ceramix.ovh`.
     "pin": 0
   }
   ```
+- `GET /logs/tail?lines=200` → retourne les dernières lignes du fichier `%ProgramData%\BonapPrintBridge\logs\bridge.log`.
+
+## Interface d'admin locale
+- Ouvrir `https://127.0.0.1:<port>/admin?token=<X-Bridge-Token>` pour charger la page (protégée par le jeton requis par l'en-tête `X-Bridge-Token`).
+- La page affiche l'état `health`, la liste des imprimantes, envoie un ticket de test, ouvre le tiroir (PIN 0) et rafraîchit les logs via les endpoints ci-dessus.
 
 ### Exemples PowerShell (Invoke-RestMethod)
 ```powershell
