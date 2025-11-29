@@ -145,6 +145,8 @@ app.Use(async (context, next) =>
     await next();
 });
 
+app.UseStaticFiles();
+
 app.MapGet("/health", (IServiceProvider services) =>
 {
     var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
@@ -162,6 +164,17 @@ app.MapGet("/health", (IServiceProvider services) =>
     });
 });
 
+app.MapGet("/admin", (IWebHostEnvironment env) =>
+{
+    var adminPath = Path.Combine(env.WebRootPath ?? string.Empty, "admin.html");
+    if (File.Exists(adminPath))
+    {
+        return Results.File(adminPath, "text/html");
+    }
+
+    return Results.NotFound();
+});
+
 app.MapGet("/printers", () =>
 {
     if (!OperatingSystem.IsWindows())
@@ -175,6 +188,25 @@ app.MapGet("/printers", () =>
         .ToArray();
 
     return Results.Ok(printers);
+});
+
+app.MapGet("/logs/tail", (HttpRequest request) =>
+{
+    var linesQuery = request.Query["lines"].FirstOrDefault();
+    var lineCount = 200;
+
+    if (!string.IsNullOrWhiteSpace(linesQuery) && int.TryParse(linesQuery, out var parsed) && parsed > 0)
+    {
+        lineCount = parsed;
+    }
+
+    if (!File.Exists(logPath))
+    {
+        return Results.File(Array.Empty<byte>(), "text/plain");
+    }
+
+    var lines = ReadLastLines(logPath, lineCount);
+    return Results.Text(string.Join(Environment.NewLine, lines), "text/plain", Encoding.UTF8);
 });
 
 app.MapPost("/print", (PrintRequest request, IOptions<BridgeOptions> options, ILoggerFactory loggerFactory) =>
@@ -310,12 +342,11 @@ static bool IsAuthorized(HttpContext context, string? expectedToken)
         return true;
     }
 
-    if (!context.Request.Headers.TryGetValue("X-Bridge-Token", out var provided))
-    {
-        return false;
-    }
+    var providedToken = context.Request.Headers.TryGetValue("X-Bridge-Token", out var provided)
+        ? provided.ToString()
+        : context.Request.Query["token"].FirstOrDefault();
 
-    return string.Equals(provided.ToString(), expectedToken, StringComparison.Ordinal);
+    return string.Equals(providedToken, expectedToken, StringComparison.Ordinal);
 }
 
 static string ResolvePrinterName(BridgeOptions options, string? requestedPrinter)
@@ -345,6 +376,25 @@ static string EnsureLogPath()
     var logDirectory = Path.Combine(programData, "BonapPrintBridge", "logs");
     Directory.CreateDirectory(logDirectory);
     return Path.Combine(logDirectory, "bridge.log");
+}
+
+static IEnumerable<string> ReadLastLines(string path, int lineCount)
+{
+    var lines = new List<string>(lineCount);
+
+    using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+    using var reader = new StreamReader(fs, Encoding.UTF8);
+
+    while (!reader.EndOfStream)
+    {
+        lines.Add(reader.ReadLine() ?? string.Empty);
+        if (lines.Count > lineCount)
+        {
+            lines.RemoveAt(0);
+        }
+    }
+
+    return lines;
 }
 
 internal record PrintRequest(string? PrinterName, string? JobName, string DataBase64, string ContentType);
