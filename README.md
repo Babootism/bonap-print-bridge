@@ -78,10 +78,10 @@ Invoke-RestMethod -Method Post "$baseUrl/receipt/print" -Headers @{ "X-Bridge-To
 ```
 
 ## Installation en service Windows
-```powershell
-# Depuis la racine du dépôt, en PowerShell administrateur
-powershell -ExecutionPolicy Bypass -File .\scripts\install-service.ps1
-```
+1. Exécuter `powershell -ExecutionPolicy Bypass -File .\scripts\install-cert.ps1` en PowerShell administrateur (depuis la racine du dépôt).
+2. Exécuter `powershell -ExecutionPolicy Bypass -File .\scripts\install-service.ps1` en PowerShell administrateur.
+3. Tester `https://127.0.0.1:<port>/health` (où `<port>` correspond à `Bridge:Port`).
+
 Le service `BonapPrintBridge` est publié en `Release`, en `win-x64`, auto-démarré et pointe vers l'exécutable généré (self-contained).
 
 ## Structure
