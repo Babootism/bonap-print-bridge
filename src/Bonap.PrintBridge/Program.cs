@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Drawing.Printing;
 using System.IO;
 using System.Net;
 using System.Reflection;
@@ -135,9 +134,8 @@ app.MapGet("/printers", () =>
         return Results.Ok(Array.Empty<object>());
     }
 
-    var defaultPrinter = new PrinterSettings().PrinterName;
-    var printers = PrinterSettings.InstalledPrinters
-        .Cast<string>()
+    var defaultPrinter = PrinterInfoProvider.GetDefaultPrinterName();
+    var printers = PrinterInfoProvider.GetPrinterNames()
         .Select(name => new { name, isDefault = string.Equals(name, defaultPrinter, StringComparison.OrdinalIgnoreCase) })
         .ToArray();
 
@@ -282,7 +280,8 @@ static string ResolvePrinterName(BridgeOptions options, string? requestedPrinter
 
     if (OperatingSystem.IsWindows())
     {
-        return new PrinterSettings().PrinterName;
+        return PrinterInfoProvider.GetDefaultPrinterName()
+            ?? throw new InvalidOperationException("No default printer configured.");
     }
 
     throw new InvalidOperationException("No printer specified and no default printer configured.");
