@@ -2,6 +2,7 @@ using Bonap.PrintBridge;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Options;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -320,7 +321,9 @@ catch (AddressInUseException ex)
 {
     app.Logger.LogCritical(
         ex,
-        "Failed to bind to port {Port}. Another process is already listening. Identify and stop the conflicting process (e.g., use `netstat -ano | find \"{Port}\"` or `lsof -i :{Port}` to find and kill the PID).",
+        "Failed to bind to port {Port}. Another process is already listening. Identify and stop the conflicting process (e.g., use `netstat -ano | find \"{PortNetstat}\"` or `lsof -i :{PortLsof}` to find and kill the PID).",
+        selectedPort,
+        selectedPort,
         selectedPort);
     return 1;
 }
