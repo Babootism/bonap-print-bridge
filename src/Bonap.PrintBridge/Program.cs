@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Drawing.Printing;
 using System.IO;
 using System.Net;
@@ -15,6 +16,8 @@ builder.Configuration
     .AddEnvironmentVariables();
 
 var bridgeOptions = builder.Configuration.GetSection("Bridge").Get<BridgeOptions>() ?? new BridgeOptions();
+var httpsEnabled = true;
+string[]? certificatePathAttempts = null;
 
 var logPath = EnsureLogPath();
 builder.Logging.ClearProviders();
@@ -44,46 +47,60 @@ builder.WebHost.ConfigureKestrel((context, options) =>
     var certificatePath = certificateSection.GetValue<string>("Path");
     var certificatePassword = certificateSection.GetValue<string>("Password");
 
-    if (string.IsNullOrWhiteSpace(certificatePath))
+    var attemptedPaths = new List<string>();
+
+    if (!string.IsNullOrWhiteSpace(certificatePath))
     {
-        throw new InvalidOperationException("Kestrel certificate path is not configured.");
+        var resolvedCertificatePath = Path.IsPathRooted(certificatePath)
+            ? certificatePath
+            : Path.GetFullPath(certificatePath, builder.Environment.ContentRootPath);
+
+        attemptedPaths.Add(resolvedCertificatePath);
     }
 
-    var resolvedCertificatePath = Path.IsPathRooted(certificatePath)
-        ? certificatePath
-        : Path.GetFullPath(certificatePath, builder.Environment.ContentRootPath);
+    var fallbackCertificatePath = Path.GetFullPath(
+        Path.Combine(builder.Environment.ContentRootPath, "..", "..", "certs", "localhost.pfx"));
 
-    if (!File.Exists(resolvedCertificatePath))
+    if (!attemptedPaths.Contains(fallbackCertificatePath, StringComparer.OrdinalIgnoreCase))
     {
-        var fallbackCertificatePath = Path.GetFullPath(
-            Path.Combine(builder.Environment.ContentRootPath, "..", "..", "certs", "localhost.pfx"));
-
-        if (File.Exists(fallbackCertificatePath))
-        {
-            resolvedCertificatePath = fallbackCertificatePath;
-        }
-        else
-        {
-            throw new FileNotFoundException(
-                $"Kestrel certificate not found. Checked '{resolvedCertificatePath}' and fallback '{fallbackCertificatePath}'.");
-        }
+        attemptedPaths.Add(fallbackCertificatePath);
     }
 
-    var uri = new Uri(url);
-    options.Listen(IPAddress.Parse(uri.Host), uri.Port, listenOptions =>
+    var resolvedPath = attemptedPaths.FirstOrDefault(File.Exists);
+    certificatePathAttempts = attemptedPaths.ToArray();
+
+    if (!string.IsNullOrEmpty(resolvedPath))
     {
-        if (string.IsNullOrWhiteSpace(certificatePassword))
+        var uri = new Uri(url);
+        options.Listen(IPAddress.Parse(uri.Host), uri.Port, listenOptions =>
         {
-            listenOptions.UseHttps(resolvedCertificatePath);
-        }
-        else
-        {
-            listenOptions.UseHttps(resolvedCertificatePath, certificatePassword);
-        }
-    });
+            if (string.IsNullOrWhiteSpace(certificatePassword))
+            {
+                listenOptions.UseHttps(resolvedPath);
+            }
+            else
+            {
+                listenOptions.UseHttps(resolvedPath, certificatePassword);
+            }
+        });
+
+        httpsEnabled = true;
+    }
+    else
+    {
+        httpsEnabled = false;
+        options.Listen(IPAddress.Loopback, bridgeOptions.Port);
+    }
 });
 
 var app = builder.Build();
+
+if (!httpsEnabled)
+{
+    app.Logger.LogWarning(
+        "HTTPS is disabled because no certificate was found. Tried paths: {Paths}",
+        certificatePathAttempts ?? Array.Empty<string>());
+}
 
 app.UseCors("BonapPrintBridgeCors");
 
@@ -105,6 +122,7 @@ app.MapGet("/health", () =>
     return Results.Ok(new
     {
         ok = true,
+        httpsEnabled,
         version,
         time = DateTimeOffset.UtcNow
     });
