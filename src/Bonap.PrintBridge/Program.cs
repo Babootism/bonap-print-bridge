@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Reflection;
@@ -105,10 +106,26 @@ app.UseCors("BonapPrintBridgeCors");
 
 app.Use(async (context, next) =>
 {
+    var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Request");
+    var sw = Stopwatch.StartNew();
+
+    await next();
+
+    sw.Stop();
+    logger.LogInformation(
+        "{Method} {Path} responded {StatusCode} in {ElapsedMs}ms",
+        context.Request.Method,
+        context.Request.Path,
+        context.Response.StatusCode,
+        sw.ElapsedMilliseconds);
+});
+
+app.Use(async (context, next) =>
+{
     if (!IsAuthorized(context, bridgeOptions.Token))
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        await context.Response.WriteAsJsonAsync(new { error = "Unauthorized" });
+        await context.Response.WriteAsJsonAsync(new { ok = false, error = "unauthorized" });
         return;
     }
 
@@ -196,8 +213,8 @@ app.MapPost("/drawer/open", (DrawerRequest request, IOptions<BridgeOptions> opti
 
     try
     {
-        var payload = EscPos.OpenDrawer(pin, t1, t2);
-        var sent = RawPrinterHelper.SendStringToPrinter(printerName, payload, "Bonap.PrintBridge Drawer");
+        var payload = EscPos.AsBytes(EscPos.OpenDrawer(pin, t1, t2));
+        var sent = RawPrinterHelper.SendBytesToPrinter(printerName, payload, "Bonap.PrintBridge Drawer");
         return sent
             ? Results.Ok(new { opened = true })
             : Results.Problem("Failed to send drawer command.", statusCode: StatusCodes.Status502BadGateway);
@@ -248,6 +265,11 @@ app.Run();
 
 static bool IsAuthorized(HttpContext context, string? expectedToken)
 {
+    if (context.Request.Path.Equals("/health", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
     if (string.IsNullOrWhiteSpace(expectedToken))
     {
         return false;
