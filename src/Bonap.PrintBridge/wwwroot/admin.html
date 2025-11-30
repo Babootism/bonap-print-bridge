@@ -37,11 +37,17 @@
   </header>
 
   <div class="card">
-    <div class="status">
-      <span id="statusDot" class="status-indicator"></span>
-      <div>
-        <div><strong>Status:</strong> <span id="statusText">Unknown</span></div>
-        <div id="healthDetails"><small>Loading health...</small></div>
+    <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+      <div class="status">
+        <span id="statusDot" class="status-indicator"></span>
+        <div>
+          <div><strong>Status:</strong> <span id="statusText">Unknown</span></div>
+          <div id="healthDetails"><small>Loading health...</small></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="testDrawerConfig" class="secondary">Tester tiroir</button>
+        <button id="testLongTicketConfig">Impression test (ticket long)</button>
       </div>
     </div>
   </div>
@@ -83,6 +89,8 @@
     const ticketText = document.getElementById('ticketText');
     const testTicketButton = document.getElementById('testTicket');
     const openDrawerButton = document.getElementById('openDrawer');
+    const testDrawerConfigButton = document.getElementById('testDrawerConfig');
+    const testLongTicketConfigButton = document.getElementById('testLongTicketConfig');
     const openDrawerAfter = document.getElementById('openDrawerAfter');
     const refreshLogsButton = document.getElementById('refreshLogs');
     const logsPanel = document.getElementById('logs');
@@ -128,7 +136,7 @@
     function setStatus(ok, details) {
       statusDot.classList.toggle('ok', ok);
       statusDot.classList.toggle('fail', !ok);
-      statusText.textContent = ok ? 'Online' : 'Offline';
+      statusText.textContent = ok ? 'Connexion OK' : 'Bridge KO';
       healthDetails.innerHTML = details;
     }
 
@@ -136,9 +144,10 @@
       try {
         const data = await fetchJson('/health');
         const urls = (data.listeningUrls || []).join('<br>');
-        setStatus(true, `Version: ${data.version || 'n/a'}<br>HTTPS: ${data.httpsEnabled}<br>Port: ${data.port}<br>Time: ${data.time}<br>URLs: ${urls}`);
+        const details = `Version: ${data.version || 'n/a'}<br>HTTPS: ${data.httpsEnabled}<br>Port: ${data.port || data.httpsPort || 'n/a'}<br>Time: ${data.time}<br>URLs: ${urls || 'n/a'}`;
+        setStatus(data.ok !== false, details);
       } catch (err) {
-        setStatus(false, `Error: ${err.message}`);
+        setStatus(false, `Erreur de connexion: ${err.message}`);
       }
     }
 
@@ -184,8 +193,8 @@
       }
     }
 
-    async function openDrawer() {
-      openDrawerButton.disabled = true;
+    async function openDrawer(buttonToLock = openDrawerButton) {
+      buttonToLock.disabled = true;
       try {
         const body = { printerName: printerSelect.value || undefined, pin: 0 };
         await fetchJson('/drawer/open', { method: 'POST', body: JSON.stringify(body) });
@@ -193,7 +202,25 @@
       } catch (err) {
         alert(`Failed to open drawer: ${err.message}`);
       } finally {
-        openDrawerButton.disabled = false;
+        buttonToLock.disabled = false;
+      }
+    }
+
+    async function sendLongTestTicket(buttonToLock = testLongTicketConfigButton) {
+      buttonToLock.disabled = true;
+      try {
+        const body = {
+          printerName: printerSelect.value || undefined,
+          text: '*** Bonap Print Bridge ***\n\nTicket de test long\n------------------------------\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Sed non risus. Suspendisse lectus tortor, dignissim sit amet, adipiscing nec, ultricies sed, dolor. Cras elementum ultrices diam.\n\nCurabitur eget sem sit amet neque dapibus fermentum. Duis suscipit velit vel libero interdum, id efficitur risus luctus.\n\nMerci !\n',
+          openDrawer: false,
+          pin: 0
+        };
+        await fetchJson('/receipt/print', { method: 'POST', body: JSON.stringify(body) });
+        alert('Ticket de test long envoyé.');
+      } catch (err) {
+        alert(`Échec de l\'impression test: ${err.message}`);
+      } finally {
+        buttonToLock.disabled = false;
       }
     }
 
@@ -211,10 +238,13 @@
     }
 
     testTicketButton.addEventListener('click', () => sendReceipt(openDrawerAfter.checked));
-    openDrawerButton.addEventListener('click', openDrawer);
+    openDrawerButton.addEventListener('click', () => openDrawer(openDrawerButton));
+    testDrawerConfigButton.addEventListener('click', () => openDrawer(testDrawerConfigButton));
+    testLongTicketConfigButton.addEventListener('click', () => sendLongTestTicket(testLongTicketConfigButton));
     refreshLogsButton.addEventListener('click', loadLogs);
 
     loadHealth();
+    setInterval(loadHealth, 5000);
     loadPrinters();
     loadLogs();
   </script>
