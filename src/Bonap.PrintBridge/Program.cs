@@ -213,6 +213,61 @@ app.MapGet("/logs/tail", (HttpRequest request) =>
     return Results.Text(string.Join(Environment.NewLine, lines), "text/plain", Encoding.UTF8);
 });
 
+app.MapPost("/print/raw", (RawPrintRequest request, IOptions<BridgeOptions> options, ILoggerFactory loggerFactory) =>
+{
+    var logger = loggerFactory.CreateLogger("PrintRaw");
+
+    if (string.IsNullOrWhiteSpace(request.DataBase64))
+    {
+        return Results.BadRequest(new { ok = false, sent = false, error = "MISSING_BASE64_DATA" });
+    }
+
+    if (!string.Equals(request.ContentType, "raw-escpos", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { ok = false, sent = false, error = "INVALID_CONTENT_TYPE" });
+    }
+
+    if (!OperatingSystem.IsWindows())
+    {
+        logger.LogWarning("Raw printing is only supported on Windows.");
+        return Results.StatusCode(StatusCodes.Status501NotImplemented);
+    }
+
+    try
+    {
+        var printerName = ResolvePrinterName(options.Value, request.PrinterName);
+
+        var knownPrinters = PrinterInfoProvider.GetPrinterNames();
+        if (knownPrinters.Count > 0 && !knownPrinters.Any(name => string.Equals(name, printerName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return Results.NotFound(new { ok = false, sent = false, error = "printer_not_found" });
+        }
+
+        byte[] jobBytes;
+        try
+        {
+            jobBytes = Convert.FromBase64String(request.DataBase64);
+        }
+        catch (FormatException ex)
+        {
+            logger.LogWarning(ex, "Invalid base64 payload supplied to /print/raw.");
+            return Results.BadRequest(new { ok = false, sent = false, error = "INVALID_BASE64_DATA" });
+        }
+
+        var jobName = string.IsNullOrWhiteSpace(request.JobName) ? "Bonap.PrintBridge Document" : request.JobName;
+        var sent = RawPrinterHelper.SendBytesToPrinter(printerName, jobBytes, jobName);
+
+        return sent
+            ? Results.Ok(new { ok = true, sent = true })
+            : Results.Json(new { ok = false, sent = false, error = "Failed to send raw data to the printer." }, statusCode: StatusCodes.Status502BadGateway);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to send raw print job.");
+        return Results.Json(new { ok = false, sent = false, error = ex.Message }, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
 app.MapPost("/print", (PrintRequest request, IOptions<BridgeOptions> options, ILoggerFactory loggerFactory) =>
 {
     var logger = loggerFactory.CreateLogger("Print");
@@ -487,6 +542,7 @@ internal record PrintRequest(string? PrinterName, string? JobName, string DataBa
 internal record DrawerRequest(string? PrinterName, int? Pin, int? T1, int? T2);
 
 internal record ReceiptRequest(string? PrinterName, string Text, bool OpenDrawer, int? Pin);
+internal record RawPrintRequest(string? PrinterName, string? JobName, string? ContentType, string? DataBase64);
 
 internal class BridgeOptions
 {
