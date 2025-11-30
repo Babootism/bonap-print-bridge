@@ -255,7 +255,12 @@ app.MapPost("/print/raw", (RawPrintRequest request, IOptions<BridgeOptions> opti
         }
 
         var jobName = string.IsNullOrWhiteSpace(request.JobName) ? "Bonap.PrintBridge Document" : request.JobName;
-        var sent = RawPrinterHelper.SendBytesToPrinter(printerName, jobBytes, jobName);
+        var cutCommand = EscPos.AsBytes(EscPos.FullCut);
+        var finalJob = new byte[jobBytes.Length + cutCommand.Length];
+        Buffer.BlockCopy(jobBytes, 0, finalJob, 0, jobBytes.Length);
+        Buffer.BlockCopy(cutCommand, 0, finalJob, jobBytes.Length, cutCommand.Length);
+
+        var sent = RawPrinterHelper.SendBytesToPrinter(printerName, finalJob, jobName);
 
         return sent
             ? Results.Ok(new { ok = true, sent = true })
@@ -300,7 +305,12 @@ app.MapPost("/print", (PrintRequest request, IOptions<BridgeOptions> options, IL
     }
 
     var jobName = string.IsNullOrWhiteSpace(request.JobName) ? "Bonap.PrintBridge Document" : request.JobName;
-    var sent = RawPrinterHelper.SendBytesToPrinter(printerName, jobBytes, jobName);
+    var cutCommand = EscPos.AsBytes(EscPos.FullCut);
+    var finalJob = new byte[jobBytes.Length + cutCommand.Length];
+    Buffer.BlockCopy(jobBytes, 0, finalJob, 0, jobBytes.Length);
+    Buffer.BlockCopy(cutCommand, 0, finalJob, jobBytes.Length, cutCommand.Length);
+
+    var sent = RawPrinterHelper.SendBytesToPrinter(printerName, finalJob, jobName);
     return sent
         ? Results.Ok(new { sent = true })
         : Results.Problem("Failed to send raw data to the printer.", statusCode: StatusCodes.Status502BadGateway);
