@@ -41,9 +41,10 @@ builder.Logging.AddProvider(new FileLoggerProvider(logPath));
 builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Bridge"));
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("BonapPrintBridgeCors", policy =>
+    options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins("https://bonap.ceramix.ovh")
+        policy
+            .AllowAnyOrigin()
             .AllowAnyMethod()
             .AllowAnyHeader();
     });
@@ -118,7 +119,9 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 
 var app = builder.Build();
 
-app.UseCors("BonapPrintBridgeCors");
+app.UseHttpsRedirection();
+
+app.UseCors();
 
 app.Use(async (context, next) =>
 {
