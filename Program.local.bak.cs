@@ -1,16 +1,19 @@
 using Bonap.PrintBridge;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Options;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Linq;
 using System.Reflection;
 using System.Text;
 
@@ -39,14 +42,11 @@ builder.Logging.AddSimpleConsole(options =>
 builder.Logging.AddProvider(new FileLoggerProvider(logPath));
 
 builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Bridge"));
-
-// CORS : on ouvre à toutes les origines (bridge local + auth par token derrière)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("BonapPrintBridgeCors", policy =>
     {
-        policy
-            .AllowAnyOrigin()
+        policy.WithOrigins("https://bonap.ceramix.ovh")
             .AllowAnyMethod()
             .AllowAnyHeader();
     });
@@ -74,9 +74,16 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 
     var endpointSection = context.Configuration.GetSection("Kestrel:Endpoints:Https");
     var configuredUrl = endpointSection.GetValue<string>("Url");
+
     var certificateSection = endpointSection.GetSection("Certificate");
     var certificatePath = certificateSection.GetValue<string>("Path");
     var certificatePassword = certificateSection.GetValue<string>("Password");
+
+    // ✅ Fix principal : si Password absent/vide, on force le mot de passe par défaut
+    if (string.IsNullOrWhiteSpace(certificatePassword))
+    {
+        certificatePassword = "bonap-bridge";
+    }
 
     var resolvedPath = ResolveCertificatePath(
         certificatePath,
@@ -93,19 +100,12 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 
     var httpsIp = IPAddress.Loopback;
     var httpsPortFinal = PickFreePort(httpsIp, preferredPort);
-
     httpsPort = httpsPortFinal;
 
+    // ✅ Fix principal : toujours passer le mot de passe au chargement du PFX
     ListenOnce(httpsIp, httpsPortFinal, listenOptions =>
     {
-        if (string.IsNullOrWhiteSpace(certificatePassword))
-        {
-            listenOptions.UseHttps(resolvedPath);
-        }
-        else
-        {
-            listenOptions.UseHttps(resolvedPath, certificatePassword);
-        }
+        listenOptions.UseHttps(resolvedPath, certificatePassword);
     });
 
     httpsEnabled = true;
@@ -258,12 +258,7 @@ app.MapPost("/print/raw", (RawPrintRequest request, IOptions<BridgeOptions> opti
         }
 
         var jobName = string.IsNullOrWhiteSpace(request.JobName) ? "Bonap.PrintBridge Document" : request.JobName;
-        var cutCommand = EscPos.AsBytes(EscPos.FullCut);
-        var finalJob = new byte[jobBytes.Length + cutCommand.Length];
-        Buffer.BlockCopy(jobBytes, 0, finalJob, 0, jobBytes.Length);
-        Buffer.BlockCopy(cutCommand, 0, finalJob, jobBytes.Length, cutCommand.Length);
-
-        var sent = RawPrinterHelper.SendBytesToPrinter(printerName, finalJob, jobName);
+        var sent = RawPrinterHelper.SendBytesToPrinter(printerName, jobBytes, jobName);
 
         return sent
             ? Results.Ok(new { ok = true, sent = true })
@@ -308,12 +303,7 @@ app.MapPost("/print", (PrintRequest request, IOptions<BridgeOptions> options, IL
     }
 
     var jobName = string.IsNullOrWhiteSpace(request.JobName) ? "Bonap.PrintBridge Document" : request.JobName;
-    var cutCommand = EscPos.AsBytes(EscPos.FullCut);
-    var finalJob = new byte[jobBytes.Length + cutCommand.Length];
-    Buffer.BlockCopy(jobBytes, 0, finalJob, 0, jobBytes.Length);
-    Buffer.BlockCopy(cutCommand, 0, finalJob, jobBytes.Length, cutCommand.Length);
-
-    var sent = RawPrinterHelper.SendBytesToPrinter(printerName, finalJob, jobName);
+    var sent = RawPrinterHelper.SendBytesToPrinter(printerName, jobBytes, jobName);
     return sent
         ? Results.Ok(new { sent = true })
         : Results.Problem("Failed to send raw data to the printer.", statusCode: StatusCodes.Status502BadGateway);
@@ -365,19 +355,19 @@ app.MapPost("/receipt/print", (ReceiptRequest request, IOptions<BridgeOptions> o
     var printerName = ResolvePrinterName(options.Value, request.PrinterName);
     var pin = request.Pin ?? options.Value.DefaultDrawerPin;
 
-    var builderEsc = new StringBuilder();
-    builderEsc.Append(EscPos.Initialize);
-    builderEsc.Append(request.Text);
-    builderEsc.Append('\n');
-    builderEsc.Append(EscPos.Feed(3));
-    builderEsc.Append(EscPos.FullCut);
+    var builder = new StringBuilder();
+    builder.Append(EscPos.Initialize);
+    builder.Append(request.Text);
+    builder.Append('\n');
+    builder.Append(EscPos.Feed(3));
+    builder.Append(EscPos.FullCut);
 
     if (request.OpenDrawer)
     {
-        builderEsc.Append(EscPos.OpenDrawer(pin));
+        builder.Append(EscPos.OpenDrawer(pin));
     }
 
-    var sent = RawPrinterHelper.SendBytesToPrinter(printerName, EscPos.AsBytes(builderEsc.ToString()), "Bonap.PrintBridge Receipt");
+    var sent = RawPrinterHelper.SendBytesToPrinter(printerName, EscPos.AsBytes(builder.ToString()), "Bonap.PrintBridge Receipt");
     return sent
         ? Results.Ok(new { printed = true })
         : Results.Problem("Failed to send receipt to printer.", statusCode: StatusCodes.Status502BadGateway);
@@ -389,8 +379,7 @@ try
     return 0;
 }
 catch (Exception ex) when (
-        ex is Microsoft.AspNetCore.Connections.AddressInUseException ||
-
+    ex is AddressInUseException ||
     (ex is IOException && ex.InnerException is SocketException se && se.SocketErrorCode == SocketError.AddressAlreadyInUse)
 )
 {
@@ -436,14 +425,14 @@ static bool IsAuthorized(HttpContext context, string? expectedToken)
         return true;
     }
 
-    if (HttpMethods.IsOptions(context.Request.Method))
-    {
-        return true;
-    }
-
     if (string.IsNullOrWhiteSpace(expectedToken))
     {
         return false;
+    }
+
+    if (HttpMethods.IsOptions(context.Request.Method))
+    {
+        return true;
     }
 
     var providedToken = context.Request.Headers.TryGetValue("X-Bridge-Token", out var provided)
@@ -556,7 +545,6 @@ internal record PrintRequest(string? PrinterName, string? JobName, string DataBa
 internal record DrawerRequest(string? PrinterName, int? Pin, int? T1, int? T2);
 
 internal record ReceiptRequest(string? PrinterName, string Text, bool OpenDrawer, int? Pin);
-
 internal record RawPrintRequest(string? PrinterName, string? JobName, string? ContentType, string? DataBase64);
 
 internal class BridgeOptions
